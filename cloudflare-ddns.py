@@ -10,11 +10,7 @@ from pathlib import Path
 import os
 from logging.handlers import HTTPHandler
 import json
-from akeyless import api_client, V2Api
-from akeyless.api import v2_api
-from akeyless.model.get_secret_value import GetSecretValue
-from akeyless.model.auth import Auth
-from akeyless.exceptions import ApiException
+import akeyless
 
 class NewRelicHandler(HTTPHandler):
     def __init__(self, license_key):
@@ -139,35 +135,60 @@ class CloudflareDDNS:
     def _init_akeyless(self):
         """Initialize Akeyless client with authentication"""
         try:
-            # Configure API client using public API endpoint
-            configuration = akeyless.Configuration(
-                    host = "https://api.akeyless.io"
-            )
-
-            api_client = akeyless.ApiClient(configuration)
-            api = akeyless.V2Api(api_client)
-
-            body = akeyless.Auth(access_id=os.environ.get('AKEYLESS_ACCESS_ID'), access_key=os.environ.get('AKEYLESS_ACCESS_KEY'))
-            res = api.auth(body)
+            # Get credentials from environment
+            access_id = os.environ.get('AKEYLESS_ACCESS_ID')
+            access_key = os.environ.get('AKEYLESS_ACCESS_KEY')
             
-            self.akeyless_token = res.token
+            if not access_id or not access_key:
+                raise ValueError("AKEYLESS_ACCESS_ID or AKEYLESS_ACCESS_KEY environment variables not set")
+            
+            # Configure API client
+            configuration = akeyless.Configuration(host="https://api.akeyless.io")
             
             # Create API client instance
-            with api_client.ApiClient(configuration) as api_client_instance:
-                return V2Api(api_client_instance)
+            with akeyless.ApiClient(configuration) as api_client:
+                api = akeyless.V2Api(api_client)
+                
+                print(f"Authenticating with access_id: {access_id}")  # Debug print
+                
+                # Authenticate
+                auth_body = akeyless.Auth(
+                    access_id=access_id,
+                    access_key=access_key
+                )
+                
+                try:
+                    auth_res = api.auth(body=auth_body)
+                    self.akeyless_token = auth_res.token
+                    print("Authentication successful")  # Debug print
+                    return api
+                except akeyless.ApiException as e:
+                    print(f"Authentication failed: {e.body}")  # Debug print
+                    raise
+                    
         except Exception as e:
             raise Exception(f"Failed to initialize Akeyless client: {str(e)}")
 
     def _get_secret(self, secret_path):
         """Retrieve a secret from Akeyless"""
         try:
-            body = GetSecretValue(
+            body = akeyless.GetSecretValue(
                 names=[secret_path],
                 token=self.akeyless_token
             )
-            result = self.akeyless_api.get_secret_value(body)
-            return result.response[0]
-        except ApiException as e:
+            result = self.akeyless_api.get_secret_value(body=body)
+            
+            # Debug print to see the structure
+            #print(f"Secret response type: {type(result)}")
+            #print(f"Secret response content: {result}")
+            
+            # The result is now a dict, so we access it directly
+            if isinstance(result, dict) and secret_path in result:
+                return result[secret_path]
+            else:
+                raise ValueError(f"Unexpected response format: {result}")
+                
+        except akeyless.ApiException as e:
             raise Exception(f"Failed to retrieve secret {secret_path}: {str(e)}")
 
     def _load_secrets(self):
@@ -175,7 +196,7 @@ class CloudflareDDNS:
         try:
             # Cloudflare credentials
             self.zone_id = self._get_secret("/cloudflare-zone-id")
-            self.dns_record_id = self._get_secret("/cloudflare-vpn.vidbuln.es-dns-rec")
+            self.dns_record_id = self._get_secret("/cloudflare-vpn.vidbuln.es-dns-record-id")
             self.auth_token = self._get_secret("/cloudflare-auth-token")
             self.domain = "vpn.vidbuln.es"  # This appears to be a constant value
             

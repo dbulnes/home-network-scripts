@@ -2,6 +2,11 @@
 
 set -x
 
-source runtime-env/bin/activate
+# Get the directory where the script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
-python cloudflare-ddns.py
+# Activate virtual environment using absolute path
+source "${SCRIPT_DIR}/runtime-env/bin/activate"
+
+# Run python script using absolute path
+python "${SCRIPT_DIR}/cloudflare-ddns.py"
