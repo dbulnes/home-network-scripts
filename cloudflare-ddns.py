@@ -11,6 +11,7 @@ import os
 from logging.handlers import HTTPHandler
 import json
 import akeyless
+import stat
 
 class NewRelicHandler(HTTPHandler):
     def __init__(self, license_key):
@@ -66,11 +67,16 @@ class NewRelicHandler(HTTPHandler):
 
 class CloudflareDDNS:
     def __init__(self):
-        # Initialize Akeyless client
-        self.akeyless_api = self._init_akeyless()
+        self.cache_file = Path.home() / '.cloudflare-ddns' / '.secrets_cache'
         
-        # Retrieve secrets from Akeyless
-        self._load_secrets()
+        # Try to load from cache first, if fails then initialize Akeyless
+        if not self._load_from_cache():
+            # Initialize Akeyless client
+            self.akeyless_api = self._init_akeyless()
+            # Retrieve secrets from Akeyless
+            self._load_secrets()
+            # Save to cache
+            self._save_to_cache()
         
         # API endpoints
         self.cf_api_base = "https://api.cloudflare.com/client/v4"
@@ -132,6 +138,64 @@ class CloudflareDDNS:
             aws_secret_access_key=self.r2_secret_access_key
         )
 
+    def _load_from_cache(self):
+        """Try to load secrets from cache file"""
+        try:
+            if not self.cache_file.exists():
+                return False
+                
+            # Check if cache file is older than last boot time
+            boot_time = Path('/proc/stat').stat().st_mtime
+            if self.cache_file.stat().st_mtime < boot_time:
+                return False
+
+            with open(self.cache_file, 'r') as f:
+                cached_secrets = json.load(f)
+
+            # Load all secrets from cache
+            self.zone_id = cached_secrets['zone_id']
+            self.dns_record_id = cached_secrets['dns_record_id']
+            self.auth_token = cached_secrets['auth_token']
+            self.domain = "vpn.vidbuln.es"
+            self.r2_account_id = cached_secrets['r2_account_id']
+            self.r2_access_key_id = cached_secrets['r2_access_key_id']
+            self.r2_secret_access_key = cached_secrets['r2_secret_access_key']
+            self.r2_bucket_name = "trash-bucket"
+            self.r2_log_prefix = "ddns_logs/"
+            self.new_relic_license_key = cached_secrets['new_relic_license_key']
+
+            return True
+
+        except Exception as e:
+            print(f"Failed to load from cache: {str(e)}")
+            return False
+
+    def _save_to_cache(self):
+        """Save secrets to cache file"""
+        try:
+            # Create directory if it doesn't exist
+            self.cache_file.parent.mkdir(exist_ok=True)
+            
+            cached_secrets = {
+                'zone_id': self.zone_id,
+                'dns_record_id': self.dns_record_id,
+                'auth_token': self.auth_token,
+                'r2_account_id': self.r2_account_id,
+                'r2_access_key_id': self.r2_access_key_id,
+                'r2_secret_access_key': self.r2_secret_access_key,
+                'new_relic_license_key': self.new_relic_license_key
+            }
+
+            # Write to cache file with restricted permissions
+            with open(self.cache_file, 'w') as f:
+                json.dump(cached_secrets, f)
+            
+            # Set file permissions to 600 (user read/write only)
+            os.chmod(self.cache_file, stat.S_IRUSR | stat.S_IWUSR)
+
+        except Exception as e:
+            print(f"Failed to save to cache: {str(e)}")
+
     def _init_akeyless(self):
         """Initialize Akeyless client with authentication"""
         try:
@@ -178,11 +242,6 @@ class CloudflareDDNS:
             )
             result = self.akeyless_api.get_secret_value(body=body)
             
-            # Debug print to see the structure
-            #print(f"Secret response type: {type(result)}")
-            #print(f"Secret response content: {result}")
-            
-            # The result is now a dict, so we access it directly
             if isinstance(result, dict) and secret_path in result:
                 return result[secret_path]
             else:
@@ -333,7 +392,6 @@ class CloudflareDDNS:
                         }
                     })
                 return current_ip, is_proxied
-            else:
                 self.logger.error("Failed to get DNS record", extra={
                     'extra_fields': {
                         'errors': data['errors'],
