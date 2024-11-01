@@ -1,3 +1,7 @@
 #!/bin/bash
+
+set -x
+
 source runtime-env/bin/activate
-python home-network-scripts/cloudflare-ddns.py
+
+python cloudflare-ddns.py

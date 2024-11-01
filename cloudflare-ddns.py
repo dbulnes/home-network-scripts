@@ -71,7 +71,7 @@ class NewRelicHandler(HTTPHandler):
 class CloudflareDDNS:
     def __init__(self):
         # Initialize Akeyless client
-        self.akeyless_client = self._init_akeyless()
+        self.akeyless_api = self._init_akeyless()
         
         # Retrieve secrets from Akeyless
         self._load_secrets()
@@ -139,9 +139,18 @@ class CloudflareDDNS:
     def _init_akeyless(self):
         """Initialize Akeyless client with authentication"""
         try:
-            # Configure API client
-            configuration = api_client.Configuration()
-            configuration.api_key['apiKey'] = os.environ.get('AKEYLESS_ACCESS_ID')
+            # Configure API client using public API endpoint
+            configuration = akeyless.Configuration(
+                    host = "https://api.akeyless.io"
+            )
+
+            api_client = akeyless.ApiClient(configuration)
+            api = akeyless.V2Api(api_client)
+
+            body = akeyless.Auth(access_id=os.environ.get('AKEYLESS_ACCESS_ID'), access_key=os.environ.get('AKEYLESS_ACCESS_KEY'))
+            res = api.auth(body)
+            
+            self.akeyless_token = res.token
             
             # Create API client instance
             with api_client.ApiClient(configuration) as api_client_instance:
@@ -154,9 +163,9 @@ class CloudflareDDNS:
         try:
             body = GetSecretValue(
                 names=[secret_path],
-                token=os.environ.get('AKEYLESS_ACCESS_ID')
+                token=self.akeyless_token
             )
-            result = self.akeyless_client.get_secret_value(body)
+            result = self.akeyless_api.get_secret_value(body)
             return result.response[0]
         except ApiException as e:
             raise Exception(f"Failed to retrieve secret {secret_path}: {str(e)}")
